@@ -52,6 +52,9 @@ def run(id, type, src, dst, slp):
         except FileNotFoundError as e:
             LOG.append(e)
             break
+        except OSError as e:
+            LOG.append(e)
+            break
     del PROC_STATUS[id]
     save_proc()
     LOG.append("Stopped backup proccess [%d]" % id)
