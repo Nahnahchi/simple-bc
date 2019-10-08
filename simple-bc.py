@@ -1,19 +1,34 @@
 from shutil import copytree, copy2
 from threading import Thread
-from os import _exit
 from datetime import datetime
 from collections import defaultdict
 from time import sleep
 from os.path import exists, join, basename, normpath
-from os import system, mkdir, name
+from os import system, _exit, mkdir, name, getenv, makedirs
 from pickle import dump, load, UnpicklingError
 
 
+class BCProcess:
+
+    def __init__(self, status, src_name, slp_time, src_type, src_path, dst_path):
+        self.status = status
+        self.src_name = src_name
+        self.slp_time = slp_time
+        self.src_type = src_type
+        self.src_path = src_path
+        self.dst_path = dst_path
+
+
+PATH = join(getenv("APPDATA"), "SimpleBC")
+try:
+    makedirs(PATH)
+except FileExistsError:
+    pass
 ID = 0
 LOG = []
-PROC_STATUS = defaultdict(list)
+PROCESSES = defaultdict(BCProcess)
 DESTINATION = "backups"
-CONFIG = "config.dat"
+CONFIG = join(PATH, "config.dat")
 
 
 def backup(src_type, src_path, dst_path):
@@ -41,7 +56,7 @@ def cls():
 def run(proc_id, src_type, src_path, dst_path, slp_time):
     LOG.append("Started new backup process on %s '%s', ID: %d" % ("file" if src_type == "f" else "directory",
                                                                   basename(normpath(src_path)), proc_id))
-    while PROC_STATUS[proc_id][0]:
+    while PROCESSES[proc_id].status:
         try:
             backup(src_type, src_path, dst_path)
             sleep(slp_time)
@@ -51,27 +66,23 @@ def run(proc_id, src_type, src_path, dst_path, slp_time):
         except ValueError as err:
             LOG.append("[Error] " + str(err))
             break
-    del PROC_STATUS[proc_id]
+    del PROCESSES[proc_id]
     save_proc()
     LOG.append("Stopped backup process [%d]" % proc_id)
 
 
 def format_path(path):
-    if path[0] == "\"" and path[-1] == "\"":
-        return path[1:-1]
-    if path[0] == "'" and path[-1] == "'":
-        return path[1:-1]
-    return path
+    return path[1:-1] if path[0] == "\"" and path[-1] == "\"" or path[0] == "'" and path[-1] == "'" else path
 
 
 def save_proc():
     with open(CONFIG, "wb") as conf:
-        dump(PROC_STATUS, conf)
+        dump(PROCESSES, conf)
 
 
 def run_interface():
 
-    global ID, PROC_STATUS, LOG
+    global ID, PROCESSES, LOG
 
     print("--------------------------")
     print("Select an option:")
@@ -98,7 +109,7 @@ def run_interface():
         src_type = "f" if inp == "1" else "d"
         try:
             slp_time = int(slp_time)
-            PROC_STATUS[ID] = [True, src_name, slp_time, src_type, src_path, dst_path]
+            PROCESSES[ID] = BCProcess(True, src_name, slp_time, src_type, src_path, dst_path)
             save_proc()
             Thread(target=run, args=(ID, src_type, src_path, dst_path, slp_time)).start()
             ID += 1
@@ -112,9 +123,9 @@ def run_interface():
 
     elif inp == "4":
 
-        for pid in PROC_STATUS.keys():
-            if PROC_STATUS[pid][0]:
-                print("[%d] '%s' every %ds" % (pid, PROC_STATUS[pid][1], PROC_STATUS[pid][2]))
+        for pid in PROCESSES.keys():
+            if PROCESSES[pid].status:
+                print("[%d] '%s' every %ds" % (pid, PROCESSES[pid].src_name, PROCESSES[pid].slp_time))
 
         print("--------------------------")
         print("0. Return")
@@ -127,17 +138,17 @@ def run_interface():
                 pass
             elif opt == "1":
                 pid = int(input("Enter process ID: "))
-                if pid not in PROC_STATUS.keys():
+                if pid not in PROCESSES.keys():
                     raise IndexError("list index out of range")
                 else:
-                    PROC_STATUS[pid][0] = False
+                    PROCESSES[pid].status = False
                     save_proc()
             elif opt == "2":
                 print("Are you sure you want to stop all backup processes? (Y/N)")
                 ans = input("~ ").upper()
                 if ans == "Y":
-                    for pid in PROC_STATUS:
-                        PROC_STATUS[pid][0] = False
+                    for pid in PROCESSES:
+                        PROCESSES[pid].status = False
                     save_proc()
         except (ValueError, IndexError) as err:
             print(err)
@@ -148,24 +159,23 @@ if __name__ == "__main__":
     if exists(CONFIG):
         with open(CONFIG, "rb") as config:
             try:
-                PROC_STATUS = load(config)
-                if bool(PROC_STATUS):
+                PROCESSES = load(config)
+                if bool(PROCESSES):
                     processes = defaultdict(Thread)
-                    for process_id in PROC_STATUS.keys():
-                        print(process_id)
-                        sleep_time = PROC_STATUS[process_id][2]
-                        source_type = PROC_STATUS[process_id][3]
-                        source_path = PROC_STATUS[process_id][4]
-                        dest_path = PROC_STATUS[process_id][5]
+                    for process_id in PROCESSES.keys():
+                        sleep_time = PROCESSES[process_id].slp_time
+                        source_type = PROCESSES[process_id].src_type
+                        source_path = PROCESSES[process_id].src_path
+                        dest_path = PROCESSES[process_id].dst_path
                         processes[process_id] = Thread(
                             target=run,
                             args=(process_id, source_type, source_path, dest_path, sleep_time)
                         )
                     for proc in processes.values():
                         proc.start()
-                    ID = list(PROC_STATUS.keys())[-1] + 1
+                    ID = list(PROCESSES.keys())[-1] + 1
             except (EOFError, UnpicklingError):
-                PROC_STATUS = defaultdict(list)
+                PROCESSES = defaultdict(BCProcess)
                 LOG.append("Couldn't load process list")
 
     while True:
